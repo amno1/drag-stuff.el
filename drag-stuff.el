@@ -85,6 +85,17 @@
 (defvar drag-stuff-after-drag-hook nil
   "Called after dragging occurs.")
 
+(defun drag-stuff--copy-region (beg end)
+  "Copy region with text properties"
+  (buffer-substring beg end))
+
+(defun drag-stuff--copy-region-noprops (beg end)
+  "Copy region with text properties"
+  (buffer-substring-no-properties beg end))
+
+(defvar drag-stuff--copy-region #'drag-stuff--copy-region-noprops
+  "Function used to copy text from region.")
+
 ;; save-mark-and-excursion in Emacs 25 works like save-excursion did before
 (eval-when-compile
   (when (not (fboundp #'save-mark-and-excursion))
@@ -223,7 +234,7 @@
 
 (defun drag-stuff-drag-region-up (beg end arg)
   "Drags region between BEG and END ARG lines up."
-  (let ((region (buffer-substring-no-properties beg end)))    
+  (let ((region (funcall drag-stuff--copy-region beg end)))    
     (delete-region beg end)
     (delete-char -1)
     (forward-line (+ arg 1))
@@ -234,7 +245,7 @@
 
 (defun drag-stuff-drag-region-down (beg end arg)
   "Drags region between BEG and END ARG lines down."
-  (let ((region (buffer-substring-no-properties beg end)))
+  (let ((region (funcall drag-stuff--copy-region beg end)))
     (delete-region beg end)
     (delete-char 1)
     (forward-line (- arg 1))
@@ -330,7 +341,37 @@
 (define-globalized-minor-mode drag-stuff-global-mode
   drag-stuff-mode
   (drag-stuff-mode +1))
+
+;; Dired-mode support
 
+(defvar drag-stuff-dired-mode-map (make-sparse-keymap)
+  "Keymap for `drag-stuff-dired-mode'.")
+
+(defun drag-stuff-dired-up (arg)
+  "As `drag-stuff-up' but for Dired (and other read-only) buffers."
+  (interactive "p")
+  (let ((inhibit-read-only t)
+        (drag-stuff--copy-region #'drag-stuff--copy-region))
+    (drag-stuff-up arg)))
+
+(defun drag-stuff-dired-down (arg)
+  "As `drag-stuff-down' but for Dired buffers."
+  (interactive "p")
+  (let ((inhibit-read-only t)
+        (drag-stuff--copy-region #'drag-stuff--copy-region))
+    (drag-stuff-down arg)))
+
+(defun drag-stuff-define-dired-keys ()
+  "Defines keys for `drag-stuff-mode'."
+  (let ((map drag-stuff-dired-mode-map))
+    (define-key map (drag-stuff--kbd 'up) #'drag-stuff-dired-up)
+    (define-key map (drag-stuff--kbd 'down) #'drag-stuff-dired-down)))
+
+;;;###autoload
+(define-minor-mode drag-stuff-dired-mode
+  "Enable drag-stuff mode in Dired buffers."
+  :init-value nil
+  :lighter " ddrag")
 
 (provide 'drag-stuff)
 
