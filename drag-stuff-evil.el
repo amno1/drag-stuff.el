@@ -71,7 +71,11 @@
   :prefix "drag-stuff-")
 
 (eval-when-compile
-  (require 'cl-lib))
+  (require 'cl-lib)
+
+  (unless (fboundp 'evilp)
+    (defun evilp ()
+      (bound-and-true-p evil-mode))))
 
 (defvar drag-stuff-except-modes ()
   "A list of modes in which `drag-stuff-mode' should not be activated.")
@@ -94,6 +98,11 @@
     (defmacro save-mark-and-excursion (&rest body)
       `(save-excursion ,@body))))
 
+(defun drag-stuff--evil-p ()
+    "Predicate for checking if we're in evil visual state."
+    (and (bound-and-true-p evil-mode)
+         (evil-visual-state-p)))
+
 (defun drag-stuff--kbd (key)
   "Key binding helper."
   (let ((mod (if (listp drag-stuff-modifier)
@@ -103,28 +112,38 @@
 
 (defun drag-stuff--line-at-mark ()
   "Returns the line number where mark (first char selected) is."
-  (line-number-at-pos (mark)))
+  (line-number-at-pos
+   (if evilp evil-visual-mark (mark))))
 
 (defun drag-stuff--line-at-point ()
   "Returns the line number where point (current selected char) is."
-  (line-number-at-pos (point)))
+  (line-number-at-pos
+   (if evilp evil-visual-point (point))))
 
 (defun drag-stuff--col-at-mark ()
   "Returns the column number where mark (first char selected) is."
-  (save-mark-and-excursion (exchange-point-and-mark) (current-column)))
+  (if evilp
+      (save-mark-and-excursion (goto-char evil-visual-mark) (current-column))
+    (save-mark-and-excursion (exchange-point-and-mark) (current-column))))
 
 (defun drag-stuff--col-at-point ()
   "Returns the column number where point (current selected char) is."
-  (current-column))
+  (if evilp
+      (save-mark-and-excursion (goto-char evil-visual-point) (current-column))
+    (current-column)))
 
-;; visual-line-mode replaces longlines-mode since Emacs 23 ...
 (defmacro drag-stuff--execute (&rest body)
   "Execute BODY without conflicting modes."
   `(let ((auto-fill-function nil)
-         (electric-indent-mode nil))
+         (electric-indent-mode nil)
+         (longlines-mode-active (bound-and-true-p longlines-mode)))
+     (when longlines-mode-active
+       (longlines-mode -1))
      (run-hooks 'drag-stuff-before-drag-hook)
      ,@body
-     (run-hooks 'drag-stuff-after-drag-hook)))
+     (run-hooks 'drag-stuff-after-drag-hook)
+     (when longlines-mode-active
+       (longlines-mode 1))))
 
 ;;;###autoload
 (defun drag-stuff-up (arg)
@@ -195,7 +214,9 @@
 
 (defun drag-stuff-lines-down (arg)
   "Move all lines in the selected region ARG lines up."
-  (let ((selection-end (region-end)))
+  (let ((selection-end (if (drag-stuff--evil-p)
+                           (save-mark-and-excursion (evil-visual-goto-end))
+                         (region-end))))
     (if (<= (+ (line-number-at-pos selection-end) arg) (count-lines (point-min) (point-max)))
         (drag-stuff-lines-vertically
          (lambda (beg end)
@@ -204,31 +225,37 @@
 
 (defun drag-stuff-lines-vertically (fn)
   "Yields variables used to drag lines vertically."
-  (let* ((mark-line (drag-stuff--line-at-mark))
+  (let* ((evilp (drag-stuff--evil-p))
+         (vtype (if evilp (evil-visual-type) nil))
+         (mark-line (drag-stuff--line-at-mark))
          (point-line (drag-stuff--line-at-point))
          (mark-col (drag-stuff--col-at-mark))
          (point-col (drag-stuff--col-at-point))
          (bounds (drag-stuff-whole-lines-region))
          (beg (car bounds))
          (end (car (cdr bounds)))
-         (deactivate-mark nil)
-         (arg (or current-prefix-arg 1)))
+         (deactivate-mark nil))
 
     (funcall fn beg end)
     ;; Restore region
-    (forward-line mark-line)
+    (goto-line mark-line)
     (forward-line arg)
     (move-to-column mark-col)
     (exchange-point-and-mark)
-    (forward-line point-line)
+    (goto-line point-line)
     (forward-line arg)
-    (move-to-column point-col)))
+    (move-to-column point-col)
+    (when evilp
+      (evil-visual-make-selection (mark) (point))
+      (when (eq vtype 'line) (evil-visual-line (mark) (point))))))
+
 
 (defun drag-stuff-drag-region-up (beg end arg)
   "Drags region between BEG and END ARG lines up."
-  (let ((region (buffer-substring-no-properties beg end)))    
+  (let ((region (buffer-substring-no-properties beg end)))
+    (when (drag-stuff--evil-p) (evil-exit-visual-state))
     (delete-region beg end)
-    (delete-char -1)
+    (backward-delete-char 1)
     (forward-line (+ arg 1))
     (goto-char (line-beginning-position))
     (insert region)
@@ -238,6 +265,7 @@
 (defun drag-stuff-drag-region-down (beg end arg)
   "Drags region between BEG and END ARG lines down."
   (let ((region (buffer-substring-no-properties beg end)))
+    (when (drag-stuff--evil-p) (evil-exit-visual-state))
     (delete-region beg end)
     (delete-char 1)
     (forward-line (- arg 1))
@@ -248,12 +276,16 @@
 (defun drag-stuff-whole-lines-region ()
   "Return the positions of the region with whole lines included."
   (let (beg end)
-    (if (> (point) (mark))
-        (exchange-point-and-mark))
-    (setq beg (line-beginning-position))
-    (if mark-active
-        (exchange-point-and-mark))
-    (setq end (line-end-position))
+    (cond (evilp
+           (setq beg (save-mark-and-excursion (goto-char (region-beginning)) (line-beginning-position)))
+           (setq end (save-mark-and-excursion (evil-visual-goto-end) (line-end-position))))
+          (t
+           (if (> (point) (mark))
+               (exchange-point-and-mark))
+           (setq beg (line-beginning-position))
+           (if mark-active
+               (exchange-point-and-mark))
+           (setq end (line-end-position))))
     (list beg end)))
 
 (defun drag-stuff-region-left (arg)
@@ -292,7 +324,7 @@
   "Drags word horizontally ARG times."
   (let ((old-point (point))
         (offset (- (save-mark-and-excursion (forward-word) (point)) (point))))
-    (condition-case _err
+    (condition-case err
         (progn
           (transpose-words arg)
           (backward-char offset))
@@ -314,7 +346,8 @@
 (define-minor-mode drag-stuff-mode
   "Drag stuff around."
   :init-value nil
-  :lighter " drag")
+  :lighter " drag"
+  :keymap drag-stuff-mode-map)
 
 ;;;###autoload
 (defun turn-on-drag-stuff-mode ()
@@ -332,7 +365,7 @@
 ;;;###autoload
 (define-globalized-minor-mode drag-stuff-global-mode
   drag-stuff-mode
-  (drag-stuff-mode +1))
+  turn-on-drag-stuff-mode)
 
 
 (provide 'drag-stuff)
