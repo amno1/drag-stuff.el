@@ -70,9 +70,6 @@
   :group 'files
   :prefix "drag-stuff-")
 
-(eval-when-compile
-  (require 'cl-lib))
-
 (defvar drag-stuff-except-modes ()
   "A list of modes in which `drag-stuff-mode' should not be activated.")
 
