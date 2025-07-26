@@ -344,22 +344,37 @@
 
 ;; Dired-mode support
 
+(defsubst dired-current-column ()
+  (- (point) (line-beginning-position)))
+
 (defvar drag-stuff-dired-mode-map (make-sparse-keymap)
   "Keymap for `drag-stuff-dired-mode'.")
 
 (defun drag-stuff-dired-up (arg)
   "As `drag-stuff-up' but for Dired (and other read-only) buffers."
   (interactive "p")
-  (let ((inhibit-read-only t)
-        (drag-stuff--copy-region #'drag-stuff--copy-region))
-    (drag-stuff-up arg)))
+  (cond ((dired-get-filename nil t)
+         (let ((inhibit-read-only t)
+               (drag-stuff--copy-region #'drag-stuff--copy-region)
+               (column (dired-current-column)))
+           (push-mark (line-beginning-position))
+           (goto-char (line-end-position))
+           (drag-stuff-line-up arg)
+           (goto-char (+ (line-beginning-position) column))))
+        (t (message "Not a draggable Dired item"))))
 
 (defun drag-stuff-dired-down (arg)
   "As `drag-stuff-down' but for Dired buffers."
   (interactive "p")
-  (let ((inhibit-read-only t)
-        (drag-stuff--copy-region #'drag-stuff--copy-region))
-    (drag-stuff-down arg)))
+  (cond ((dired-get-filename nil t)
+         (let ((inhibit-read-only t)
+               (drag-stuff--copy-region #'drag-stuff--copy-region)
+               (column (dired-current-column)))
+           (push-mark (line-beginning-position))
+           (goto-char (line-end-position))
+           (drag-stuff-line-down arg)
+           (goto-char (+ (line-beginning-position) column))))
+        (t (message "Not a draggable Dired item"))))
 
 (defun drag-stuff-define-dired-keys ()
   "Defines keys for `drag-stuff-mode'."
